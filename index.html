@@ -3299,6 +3299,41 @@ let _pgpTipoVisita = 'inspecao'; // 'inspecao' | 'preventiva'
 // ── FILA DE PENDÊNCIAS ────────────────────────────────────
 // Armazena payloads que falharam para reenviar quando reconectar
 const PENDING_KEY = 'pgp_pending_sync';
+const QUEUE_LIMIT    = 40;   // bloqueia novos itens acima deste valor
+const QUEUE_WARN_AT  = 30;   // avisa o usuário a partir deste valor
+
+/**
+ * Salva a fila no localStorage com validação de limite.
+ * @param {Array} list - array completo da fila a salvar
+ * @returns {{ saved: boolean, blocked: boolean, count: number }}
+ */
+function savePendingQueue(list) {
+  const count = list.length;
+
+  if (count >= QUEUE_LIMIT) {
+    showNotification(
+      '🚫 Fila offline cheia (' + count + '/' + QUEUE_LIMIT + ' itens). ' +
+      'Conecte-se para enviar antes de registrar novas visitas.'
+    );
+    return { saved: false, blocked: true, count };
+  }
+
+  if (count >= QUEUE_WARN_AT) {
+    showNotification(
+      '⚠️ Fila offline com ' + count + ' itens. ' +
+      'Conecte-se em breve para evitar bloqueio.'
+    );
+  }
+
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+  } catch (e) {
+    showNotification('❌ Erro ao salvar fila offline: ' + (e.message || 'falha no armazenamento'));
+    return { saved: false, blocked: false, count };
+  }
+
+  return { saved: true, blocked: false, count };
+}
 
 function pgpNormalizeValue(v){
   return String(v||'').trim().toLowerCase();
@@ -3354,7 +3389,7 @@ function pgpQueueRequest(action, body){
   ].join('|');
   const next = list.filter(item => item.signature !== signatureBase);
   next.push({ action, body, signature: signatureBase, ts: Date.now() });
-  localStorage.setItem(PENDING_KEY, JSON.stringify(next.slice(-30)));
+  savePendingQueue(next);
   pgpUpdatePendingBadge();
 }
 
@@ -3469,8 +3504,8 @@ function pgpUpdateGsStatusDisplay(){
   if(!el) return;
   const pending=pgpGetPending().length;
   el.textContent=_pgpGsConnected
-    ?'✅ Conectado ao Google Sheets'+(pending?` · ${pending} pendente${pending>1?'s':''}`:' · tudo sincronizado')
-    :'⚠ Sem conexão — dados salvos localmente'+(pending?` · ${pending} envio${pending>1?'s':''} na fila`:'');
+    ?'✅ Conectado ao Google Sheets'+(pending?` · ${pending}/${QUEUE_LIMIT} pendente${pending>1?'s':''}`:' · tudo sincronizado')
+    :'⚠ Sem conexão — dados salvos localmente'+(pending?` · ${pending}/${QUEUE_LIMIT} na fila`:'');
   el.style.color=_pgpGsConnected?'var(--green)':'var(--orange)';
 }
 
@@ -3963,10 +3998,19 @@ async function pgpEnviarPreventiva(){
 
   if(!_pgpGsConnected){
     const list=pgpGetPending();
+    if(list.length >= QUEUE_LIMIT){
+      showNotification('🚫 Fila offline cheia (' + list.length + '/' + QUEUE_LIMIT + ' itens). Conecte-se primeiro.');
+      if(btn){btn.disabled=false;btn.textContent='🔧 Registrar Preventiva';}
+      return;
+    }
     list.push({action:'savePreventiva',body:payload,signature:payload.visit_id,ts:Date.now()});
-    localStorage.setItem(PENDING_KEY,JSON.stringify(list.slice(-30)));
+    const qResult = savePendingQueue(list);
     pgpUpdatePendingBadge();
-    showNotification('📋 Preventiva salva na fila — enviada ao conectar');
+    if(qResult.blocked){
+      showNotification('🚫 Não foi possível salvar — fila cheia. Conecte-se primeiro.');
+    } else {
+      showNotification('📋 Preventiva salva na fila (' + qResult.count + '/' + QUEUE_LIMIT + ') — enviada ao conectar');
+    }
     if(btn){btn.disabled=false;btn.textContent='🔧 Registrar Preventiva';}
     return;
   }
@@ -3990,10 +4034,18 @@ async function pgpEnviarPreventiva(){
     }
   }catch(e){
     const list=pgpGetPending();
-    list.push({action:'savePreventiva',body:payload,signature:payload.visit_id,ts:Date.now()});
-    localStorage.setItem(PENDING_KEY,JSON.stringify(list.slice(-30)));
-    pgpUpdatePendingBadge();
-    showNotification('⏳ Falha — preventiva salva na fila');
+    if(list.length >= QUEUE_LIMIT){
+      showNotification('🚫 Falha no envio e fila cheia. Conecte-se para liberar espaço.');
+    } else {
+      list.push({action:'savePreventiva',body:payload,signature:payload.visit_id,ts:Date.now()});
+      const qResult = savePendingQueue(list);
+      pgpUpdatePendingBadge();
+      if(qResult.blocked){
+        showNotification('🚫 Falha no envio e fila cheia. Conecte-se para liberar espaço.');
+      } else {
+        showNotification('⏳ Falha — preventiva salva na fila (' + qResult.count + '/' + QUEUE_LIMIT + ')');
+      }
+    }
   }finally{
     if(btn){btn.disabled=false;btn.textContent='🔧 Registrar Preventiva';}
   }
