@@ -3449,6 +3449,10 @@ async function pgpFlushPending(){
   pgpUpdatePendingBadge();
   if(sent>0){
     showNotification(`✅ ${sent} envio${sent>1?'s':''} pendente${sent>1?'s':''} reenviado${sent>1?'s':''}!`);
+    const statusEl = document.getElementById('pgpSendStatus');
+    if(statusEl && statusEl.textContent !== '') {
+      statusEl.innerHTML = `<span style="color:var(--blue,#3b82f6)">🔄 Reenviado — ${sent} visita${sent>1?'s':''} da fila processada${sent>1?'s':''} com sucesso.</span>`;
+    }
   }
 }
 
@@ -3654,12 +3658,83 @@ function pgpLoadMachine(eq,localDb){
   card.classList.add('show');
   document.querySelectorAll('[data-section]').forEach(s=>refreshSection(s));
   updateProgress(); updateAllTabNames();
+
+  renderMachineHistory(null, true);
+  fetchMachineHistory(eq.id || eq.machine_id || '').then(hist => renderMachineHistory(hist, false));
 }
 
 function pgpClearMachine(){
   _pgpLoadedMachine=null;
   document.getElementById('pgpLoadedCard').classList.remove('show');
+  const histEl = document.getElementById('machineHistoryPanel');
+  if (histEl) histEl.style.display = 'none';
   pgpBackToStep1();
+}
+
+async function fetchMachineHistory(machineId) {
+  if (!machineId || !_pgpGsUrl) return null;
+  try {
+    const r = await fetch(
+      _pgpGsUrl + '?action=getVisitsByMachine' +
+      '&machine_id=' + encodeURIComponent(machineId) +
+      '&key=' + _AUTH_HASH,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.status !== 'ok') return null;
+    return { visits: d.visits || [], pecasLog: d.pecasLog || {} };
+  } catch (e) {
+    console.warn('fetchMachineHistory falhou:', e.message || e);
+    return null;
+  }
+}
+
+function renderMachineHistory(hist, loading) {
+  let el = document.getElementById('machineHistoryPanel');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'machineHistoryPanel';
+    el.style.cssText = 'margin-top:12px;padding:10px 12px;background:var(--bg2,#f8f8f8);border-radius:8px;font-size:13px';
+    const anchor = document.getElementById('pgpLoadedCard');
+    if (anchor) anchor.after(el);
+    else document.body.appendChild(el);
+  }
+
+  el.style.display = 'block';
+
+  if (loading) {
+    el.innerHTML = '<span style="color:var(--text2,#888)">⏳ Carregando histórico...</span>';
+    return;
+  }
+
+  if (!hist || !hist.visits || hist.visits.length === 0) {
+    el.innerHTML = '<span style="color:var(--text2,#888)">Sem visitas anteriores registradas.</span>';
+    return;
+  }
+
+  const tipoLabel = { preventiva: '🔧 Preventiva', inspecao: '🔍 Inspeção', inspeção: '🔍 Inspeção' };
+
+  const visitasHtml = hist.visits.slice(0, 5).map(v => {
+    const pecas = (hist.pecasLog[v.visitId] || []).filter(p => p.acao === 'trocada');
+    const pecasHtml = pecas.length > 0
+      ? `<div style="margin-top:4px;color:var(--text2,#888);font-size:11px">Trocadas: ${pecas.map(p => p.name || p.partId).join(', ')}</div>`
+      : '';
+    return `<div style="padding:6px 0;border-bottom:0.5px solid var(--border,#e0e0e0)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-weight:500">${tipoLabel[v.tipo] || v.tipo}</span>
+        <span style="color:var(--text2,#888);font-size:11px">${v.visitDate || '—'}</span>
+      </div>
+      <div style="color:var(--text2,#888);font-size:11px">Horímetro: ${v.hourTotal ? v.hourTotal + 'h' : '—'}${v.tech ? ' · Técnico: ' + v.tech : ''}</div>
+      ${pecasHtml}
+    </div>`;
+  }).join('');
+
+  const maisLabel = hist.visits.length > 5
+    ? `<div style="color:var(--text2,#888);font-size:11px;margin-top:4px">+ ${hist.visits.length - 5} visita(s) anterior(es) no histórico completo</div>`
+    : '';
+
+  el.innerHTML = `<div style="font-weight:500;margin-bottom:6px">Histórico de visitas</div>${visitasHtml}${maisLabel}`;
 }
 
 // ── ETAPA 4 — FLUXO CLIENTE → MÁQUINA ────────────────────────────────────
@@ -4142,7 +4217,7 @@ async function pgpEnviarGS(){
     if(payload.machine_id && Object.keys(payload.parts||{}).length>0){
       pgpAddPending('parts', pgpBuildPartsUpdateRequest(payload));
     }
-    statusEl.innerHTML='<span style="color:var(--orange)">⏳ Sem conexão — visita salva na fila. Será enviada automaticamente ao conectar.</span>';
+    statusEl.innerHTML='<span style="color:var(--orange)">⏳ Pendente — visita salva na fila. Será reenviada ao conectar.</span>';
     pgpUpdateGsStatusDisplay();
     return;
   }
@@ -4166,7 +4241,7 @@ async function pgpEnviarGS(){
       }
     }
 
-    statusEl.innerHTML='<span style="color:var(--green)">✅ Enviado! Visita: '+(d1.visitId||'OK')+partsWarn+'</span>';
+    statusEl.innerHTML='<span style="color:var(--green)">✅ Enviado — visita: '+(d1.visitId||'OK')+partsWarn+'</span>';
     btn.textContent='✅ Enviado!';
     btn.style.background='var(--green)';
     showNotification(partsWarn ? '✅ Visita enviada; peças na fila.' : '✅ Dados enviados ao Sheets!');
@@ -4177,7 +4252,7 @@ async function pgpEnviarGS(){
     if(payload.machine_id && Object.keys(payload.parts||{}).length>0){
       pgpAddPending('parts', pgpBuildPartsUpdateRequest(payload));
     }
-    statusEl.innerHTML='<span style="color:var(--orange)">⏳ Falha no envio — visita salva na fila.<br><small style="color:var(--red)">'+(e.message||'')+'</small></span>';
+    statusEl.innerHTML='<span style="color:var(--red)">❌ Erro — visita salva na fila para reenvio.<br><small>'+(e.message||'')+'</small></span>';
     btn.disabled=false;
     btn.textContent='📤 Tentar novamente';
     pgpUpdateGsStatusDisplay();
