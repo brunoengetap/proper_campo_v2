@@ -3521,7 +3521,7 @@ function abrirConfig(){
 function fecharConfig(){document.getElementById('cfgOverlay').classList.remove('open');}
 
 async function salvarConfig(){
-  const url=document.getElementById('cfgUrlInput').value.trim();
+  const url=document.getElementById('cfgUrlInput').value.trim().replace(/\/+$/,'');
   if(!url){document.getElementById('cfgTestResult').textContent='Cole a URL do Apps Script.';return;}
   _pgpGsUrl=url;
   localStorage.setItem('proper_gs_url',url);
@@ -3577,7 +3577,7 @@ function pgpOnInput(){
 }
 function pgpOnKey(e){if(e.key==='Enter'){pgpHideAc();pgpDoSearch();}if(e.key==='Escape')pgpHideAc();}
 function pgpSelectAc(val){document.getElementById('pgpSearchInput').value=val;pgpHideAc();pgpDoSearch();}
-function pgpHideAc(){document.getElementById('pgpAcList').style.display='none';}
+function pgpHideAc(){const el=document.getElementById('pgpAcList');if(el)el.style.display='none';}
 document.addEventListener('click',e=>{if(!e.target.closest('#pgpSearchInput')&&!e.target.closest('#pgpAcList'))pgpHideAc();});
 
 async function pgpDoSearch(){
@@ -3622,7 +3622,9 @@ async function pgpDoSearch(){
 
 function pgpLoadMachine(eq,localDb){
   _pgpLoadedMachine=eq;
-  const sv=(key,val)=>{const el=document.querySelector(`[data-key="m0_${key}"]`);if(el&&val)el.value=val;};
+  const sv=(key,val)=>{const el=document.querySelector(`[data-key="m0_${key}"]`);if(el)el.value=val??'';};
+  // Limpar todos os campos m0_ antes de popular com a nova máquina
+  document.querySelectorAll('[data-key^="m0_"]').forEach(el=>{ if(el.tagName!=='BUTTON') el.value=''; });
   sv('razao_social',eq.client); sv('filial',eq.branch);     sv('cnpj',eq.cnpj);
   sv('contato',eq.contact);     sv('telefone',eq.phone);    sv('email',eq.email);
   sv('cidade',eq.city);         sv('marca',eq.brand);       sv('modelo',eq.model);
@@ -3666,8 +3668,12 @@ function pgpLoadMachine(eq,localDb){
 function pgpClearMachine(){
   _pgpLoadedMachine=null;
   document.getElementById('pgpLoadedCard').classList.remove('show');
-  const histEl = document.getElementById('machineHistoryPanel');
-  if (histEl) histEl.style.display = 'none';
+  const histEl=document.getElementById('machineHistoryPanel');
+  if(histEl)histEl.style.display='none';
+  // Limpar todos os campos do formulário de máquina
+  document.querySelectorAll('[data-key^="m0_"]').forEach(el=>{ if(el.tagName!=='BUTTON') el.value=''; });
+  // Remover estado "checked" dos field-items
+  document.querySelectorAll('#panel-0 .field-item').forEach(fi=>fi.classList.remove('checked'));
   pgpBackToStep1();
 }
 
@@ -4144,7 +4150,7 @@ function pgpRegisterNew(){
     email:'',city:'',obs:'',driveLink:'',photos:[],parts:{},
   };
   // Salvar no localStorage do admin
-  try{const db=JSON.parse(localStorage.getItem('proper_admin_v2'));if(db?.machines){db.machines.push(eq);localStorage.setItem('proper_admin_v2',JSON.stringify(db));}}catch(e){}
+  pgpUpdateAdminLocal({machine_id:eq.id,serial:eq.serial,tag:eq.tag,client:eq.client,branch:eq.branch,brand:eq.brand,model:eq.model,location:eq.location,hourTotal:eq.hourTotal,hpw:eq.hpw});
 
   // Enviar ao GAS ou enfileirar para reenvio
   if(_pgpGsConnected&&_pgpGsUrl){
